@@ -4,14 +4,71 @@ import gc
 class RandTS():
     def __init__(self,featureSelection = 'None'):
         self.featureSelection = featureSelection
-        self.method = None
+        self.method = 'l'
         self.n = False
-        self.depth = None
+        self.depth = 5
         self.var = 0
+		self.ntree = 100
+		
         self.datasetDirectory = None
         self.multivariate = False
+		self.train = None
+		self.test = None
+		self.labels_train = None
+		self.labels_test = None
+		self.randTrees_list = []
+		self.train_representations = []
+		
+	def fit(self, train, train_labels):
+        batch_list2 = list(range(100)) 
+        first = True
+        counter = 0
+
+        rep = np.random.randint(1,10000)
+        for b in batch_list2:
+
+            represent_train, train_id = prepare_data_new(self.train,mode=self.method)
+
+            represent_train['Id'] = train_id
+            represent_train = represent_train.dropna()
 
 
+            train_id = represent_train['Id'].values
+            represent_train = represent_train.drop(columns = ['Id'])
+
+			
+			 learn_representation_sparse_new(represent_train,labels_train,train_id,depth, ntree,random_seed,is_terminal=True,normal=False):
+			
+			
+            trainbow,randTrees = learn_representation_sparse_2(represent_train,labels_train, train_id, self.depth, int(100/len(batch_list2)),rep*1000+counter, True,normal=False)
+            counter = counter +1
+			
+			self.randTrees_list.append(randTrees)
+			self.train_representations.append(trainbow)
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
     def addDatasetDirectory(self,directory):
         self.datasetDirectory = directory
     

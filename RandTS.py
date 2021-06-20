@@ -1,21 +1,124 @@
 import pandas as pd
 from src import *
 import gc
+from sklearn.feature_selection import SelectFromModel
+from sklearn.feature_selection import VarianceThreshold
 class RandTS():
-    def __init__(self,featureSelection = 'None'):
+    def __init__(self, method = 'l',depth = 5,ntree=10,var=10, featureSelection = None):
         self.featureSelection = featureSelection
-        self.method = None
+        self.method = method
         self.n = False
-        self.depth = None
-        self.var = 0
+        self.depth = depth
+        self.var = var
+        self.ntree = ntree
+        
+        
         self.datasetDirectory = None
         self.multivariate = False
+        self.train = None
+        self.test = None
+        self.labels_train = None
+        self.labels_test = None
+        self.randTrees_list = []
+        self.train_representations = []
+        self.trainReps = []
+        self.trainIds = []
+        self.unsupervisedSelector = []
+		
+    def fit(self, train, train_labels):
+        self.train = train
+        self.labels_train = train_labels
+        batch_list2 = list(range(10)) 
+        first = True
+        counter = 0
 
+        rep = np.random.randint(1,10000)
+        for b in batch_list2:
 
+            represent_train, train_id = prepare_data_new(self.train,mode=self.method)
+
+            represent_train['Id'] = train_id
+            represent_train = represent_train.dropna()
+
+            train_id = represent_train['Id'].values
+            represent_train = represent_train.drop(columns = ['Id'])
+
+       	
+            trainbow,randTrees,trainRep,train_id = learn_representation_sparse_new(represent_train,self.labels_train, train_id, self.depth, int(self.ntree/len(batch_list2)),rep*1000+counter, True,normal=False)
+            self.trainReps.append(trainRep)
+            self.trainIds.append(train_id)
+            
+            counter = counter +1
+			
+            self.randTrees_list.append(randTrees)
+            self.train_representations.append(trainbow)
+		
+		
+    def predict(self,test,test_labels = None):
+        self.test = test
+        if test_labels is not None:
+            self.labels_test = test_labels
+        batch_list2 = list(range(10)) 
+        first = True
+        counter = 0
+
+        rep = np.random.randint(1,10000)
+        for b in batch_list2:
+
+            represent_test, test_id = prepare_data_new(self.test,mode=self.method)
+
+            represent_test['Id'] = test_id
+            represent_test = represent_test.dropna()
+            test_id = represent_test['Id'].values
+            represent_test = represent_test.drop(columns = ['Id'])
+
+            testbow = get_terminalNode_representation(represent_test,test_id,self.trainReps[counter],self.trainIds[counter],self.randTrees_list[counter],self.depth, int(self.ntree/len(batch_list2)))
+            
+            trainbow_updated = self.train_representations[counter]
+            
+            if self.featureSelection == 'Unsupervised':
+                sel = VarianceThreshold(threshold=0)
+                trainbow_updated = sel.fit_transform(trainbow_updated)
+                testbow = sel.transform(testbow)                                    
+                                        
+                vals = np.percentile(np.var(trainbow_updated.todense(),axis=0),self.var,axis=1)      
+                sel = VarianceThreshold(threshold=vals)
+                trainbow_updated = sel.fit_transform(trainbow_updated)
+                testbow = sel.transform(testbow)
+
+            elif self.featureSelection == 'Supervised':
+                clf = ExtraTreesClassifier(n_estimators=100)
+                clf = clf.fit(trainbow_updated, self.labels_train)
+                model = SelectFromModel(clf, prefit=True)
+
+                trainbow_updated = model.transform(trainbow_updated)
+                testbow = model.transform(testbow)
+            
+
+            if first is True:
+                distTrainTest=pairwise_distances(trainbow_updated,testbow,metric='manhattan',n_jobs=-1) 
+                first = False
+            else:
+                distTrainTest = distTrainTest +pairwise_distances(trainbow_updated,testbow,metric='manhattan',n_jobs = -1) 
+            del testbow
+            counter = counter +1
+            gc.collect()
+
+        predicted_test = np.array(self.labels_train)[np.argmin(distTrainTest, axis=0)]
+        if test_labels is not None:
+            self.test_accuracy=accuracy_score(test_labels,predicted_test)
+
+        #temp_results = pd.DataFrame({'data_name':[data_name],'method':method,'distance_measure':[distance_measure],'normalize':[n],'rep':[rep+1],'depth':[depth],'ntree':[400],'type':[is_terminal],'test_acc':[test_accuracy],'param_time':[np.round(param_time,1)],'train_time':[np.round(train_time,1)],'test_time':[np.round(test_time,1)]})
+        #test_results = test_results.append(temp_results,sort=False)
+        return predicted_test 
+		
+		
     def addDatasetDirectory(self,directory):
         self.datasetDirectory = directory
     
-    def selectParameters(self, dataset_name, param_kwargs={'depth_cv':[3,5,10], 'ntree_cv':[100], 'rep_num':1, 'method_cv':['l','d','b']}):
+    def selectParameters(self, train, train_labels, param_kwargs={'depth_cv':[3,5,10], 'ntree_cv':[100], 'rep_num':1, 'method_cv':['l','d','b']}):
+        self.train = train
+        self.labels_train = train_labels
         depth_cv = param_kwargs['depth_cv']
         ntree_cv = param_kwargs['ntree_cv']
         term_cv = [True]
@@ -26,13 +129,9 @@ class RandTS():
         batch_list = list(range(10))
 
 
-        data_name = dataset_name
-        train,test,labels_train,labels_test,X_train,X_test = load_data_new(self.datasetDirectory,data_name)
-
-        results = pd.DataFrame(columns=['data_name','method','distance_measure','normalize','rep','depth','ntree','var','oob_acc'])
+        results = pd.DataFrame(columns=['method','distance_measure','normalize','rep','depth','ntree','var','oob_acc'])
 
         for method in method_cv:
-            represent_train, represent_test, train_id, test_id = prepare_data(X_train,X_test,mode=method)
             for distance_measure in distance_list:
                 for rep in range(rep_num):
                     for depth in depth_cv:
@@ -42,19 +141,14 @@ class RandTS():
                                     first = True
                                     counter = 0
                                     for b in batch_list:
-                                        represent_train, represent_test, train_id, test_id = prepare_data(X_train,X_test,mode=method)
+                                        represent_train, train_id = prepare_data_new(self.train,mode=method)
                                         represent_train['Id'] = train_id
                                         represent_train = represent_train.dropna()
                                         train_id = represent_train['Id'].values
                                         represent_train = represent_train.drop(columns = ['Id'])
 
-
-                                        represent_test['Id'] = test_id
-                                        represent_test = represent_test.dropna()
-                                        test_id = represent_test['Id'].values
-                                        represent_test = represent_test.drop(columns = ['Id'])
                                         
-                                        trainbow,testbow = learn_representation_sparse_2(represent_train, None,labels_train,labels_test, train_id, test_id, depth, int(ntree/len(batch_list)),rep*1000+counter, is_terminal,normal=False)
+                                        trainbow,randTrees,trainRep,train_id = learn_representation_sparse_new(represent_train,self.labels_train, train_id, depth, int(ntree/len(batch_list)),rep*1000+counter, True,normal=False)
                                         counter = counter +1                    
                                         
                                         if first is True:
@@ -63,14 +157,13 @@ class RandTS():
                                         else:
                                             distTrain=distTrain+ pairwise_distances(trainbow,metric="manhattan",n_jobs=-1)
                                         del trainbow
-                                        del testbow
                                         gc.collect()
                                     np.fill_diagonal(distTrain, 1000000000000)
                                     nncl=KNeighborsClassifier(n_neighbors=1,metric='precomputed')
-                                    nnfit=nncl.fit(distTrain,labels_train)
+                                    nnfit=nncl.fit(distTrain,self.labels_train)
                                     predicted_train = nnfit.predict(distTrain)
-                                    cv_accuracy = accuracy_score(labels_train,predicted_train)
-                                    temp_results = pd.DataFrame({'data_name':[data_name],'method':method,'distance_measure':[distance_measure],'normalize':[False],'rep':[rep+1],'depth':[depth],'ntree':[ntree],'var':[n],'type':[is_terminal],'oob_acc':[cv_accuracy]})
+                                    cv_accuracy = accuracy_score(self.labels_train,predicted_train)
+                                    temp_results = pd.DataFrame({'method':method,'distance_measure':[distance_measure],'normalize':[False],'rep':[rep+1],'depth':[depth],'ntree':[ntree],'var':[n],'type':[is_terminal],'oob_acc':[cv_accuracy]})
 
                                     results = results.append(temp_results,sort=False)
                                         
@@ -83,57 +176,3 @@ class RandTS():
         print('Parameter selection is completed')
         print(summary)
 
-
-    def train_test(self,dataset_name, method=None,depth=None):
-        if depth is None:
-            depth = self.depth
-        if method is None:
-            method = self.method
-        train,test,labels_train,labels_test,X_train,X_test = load_data_new(self.datasetDirectory,dataset_name)
-        batch_list2 = list(range(100)) 
-        first = True
-        counter = 0
-
-        rep = np.random.randint(1,10000)
-        for b in batch_list2:
-
-            represent_train, represent_test, train_id, test_id = prepare_data(X_train,X_test,mode=method)
-
-            represent_train['Id'] = train_id
-            represent_train = represent_train.dropna()
-
-
-            train_id = represent_train['Id'].values
-            represent_train = represent_train.drop(columns = ['Id'])
-
-
-            represent_test['Id'] = test_id
-            represent_test = represent_test.dropna()
-
-            test_id = represent_test['Id'].values
-            represent_test = represent_test.drop(columns = ['Id'])
-
-            trainbow,testbow = learn_representation_sparse_2(represent_train, represent_test,labels_train,labels_test, train_id, test_id, depth, int(500/len(batch_list2)),rep*1000+counter, True,normal=False)
-            counter = counter +1
-
-            trainbow_1 = trainbow
-            testbow_1 = testbow   
-
-
-            if first is True:
-                distTrainTest=pairwise_distances(trainbow_1,testbow_1,metric='manhattan',n_jobs=-1) 
-                first = False
-            else:
-                distTrainTest = distTrainTest +pairwise_distances(trainbow_1,testbow_1,metric='manhattan',n_jobs = -1) 
-            del trainbow
-            del testbow
-            gc.collect()
-
-        predicted_test = np.array(labels_train)[np.argmin(distTrainTest, axis=0)]
-        test_accuracy=accuracy_score(labels_test,predicted_test)
-
-        #temp_results = pd.DataFrame({'data_name':[data_name],'method':method,'distance_measure':[distance_measure],'normalize':[n],'rep':[rep+1],'depth':[depth],'ntree':[400],'type':[is_terminal],'test_acc':[test_accuracy],'param_time':[np.round(param_time,1)],'train_time':[np.round(train_time,1)],'test_time':[np.round(test_time,1)]})
-        #test_results = test_results.append(temp_results,sort=False)
-
-        print('Test Accuracy :', test_accuracy)
-        return test_accuracy, predicted_test

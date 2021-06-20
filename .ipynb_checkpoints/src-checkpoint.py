@@ -43,6 +43,27 @@ def load_data_new(directory, data_name):
 	X_test= test[:,1:test.shape[1]]
 	return train,test,labels_train,labels_test,X_train,X_test
 
+def prepare_data_new(X_train,mode):
+	times = [range(X_train.shape[1]-1)]
+	times_train = np.repeat(times,X_train.shape[0],axis=0).flatten()
+
+	represent_train = pd.DataFrame({'times':times_train})
+    
+	if mode == "l":
+		represent_train['obs'] = X_train[:,1:].flatten()
+	elif mode == "d":
+		represent_train['diff'] = np.diff(X_train).flatten()
+	else:
+		represent_train['obs'] = X_train[:,1:].flatten()
+		represent_train['diff'] = np.diff(X_train).flatten()
+
+	train_id = list(range(X_train.shape[0]))*int(X_train.shape[1]-1)
+	train_id.sort()
+
+	return represent_train, train_id
+
+	
+
 def prepare_data(X_train,X_test,mode):
 	times = [range(X_train.shape[1]-1)]
 	times_train = np.repeat(times,X_train.shape[0],axis=0).flatten()
@@ -254,6 +275,37 @@ def learn_representation_sparse_2(represent_train, represent_test,labels_train,l
 	allbow = normalize(allbow, norm='l1', axis=1)
 		
 	return allbow[:select_ind,:],allbow[select_ind:,:]
+
+
+
+def learn_representation_sparse_new(represent_train,labels_train,train_id,depth, ntree,random_seed,is_terminal=True,normal=False):
+	
+	rt = RandomTreesEmbedding(max_depth=depth,n_estimators=ntree,random_state =random_seed,n_jobs=-1)
+	
+	traincv=represent_train
+	trainind=np.unique(train_id)
+	trainlabels=labels_train
+
+	randTrees=rt.fit(traincv.values)	
+	trainRep=randTrees.apply(traincv.values)
+
+	allRep = trainRep
+	allids = np.array(train_id)
+
+	ids=np.tile(allids,ntree)
+		
+	increments=np.arange(0,ntree)*(2**depth)
+	allRep=allRep+increments
+	node_ids=allRep.flatten('F')
+	
+	data=np.repeat(1,len(ids))
+	allbow=sparse.coo_matrix((data,(ids,node_ids)), dtype=np.int8).tocsr()
+	select_ind =trainind.shape[0]
+
+	allbow = normalize(allbow, norm='l1', axis=1)
+		
+	return allbow,randTrees
+
 
 def learn_representation_sparse_2_complex(represent_train, represent_test,labels_train,labels_test,train_id,test_id,depth, ntree,random_seed,is_terminal=True,normal=False):
 	
